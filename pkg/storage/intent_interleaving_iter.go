@@ -80,7 +80,7 @@ const (
 // bounds, the call to newIntentInterleavingIter must have specified at least
 // one of the lower or upper bound. We use that to "constrain" the iterator as
 // either a local key iterator or global key iterator and panic if a caller
-// violates that in a subsequent SeekGE/SeekLT/SetUpperBound call.
+// violates that in a subsequent SeekGE/SeekLT call.
 type intentInterleavingIter struct {
 	prefix     bool
 	constraint intentInterleavingIterConstraint
@@ -954,17 +954,6 @@ func (i *intentInterleavingIter) FindSplitKey(
 	return findSplitKeyUsingIterator(i, start, end, minSplitKey, targetSize)
 }
 
-func (i *intentInterleavingIter) SetUpperBound(key roachpb.Key) {
-	i.iter.SetUpperBound(key)
-	// Preceding call to SetUpperBound has confirmed that key != nil.
-	if i.constraint != notConstrained {
-		i.checkConstraint(key, true)
-	}
-	var intentUpperBound roachpb.Key
-	intentUpperBound, i.intentKeyBuf = keys.LockTableSingleKey(key, i.intentKeyBuf)
-	i.intentIter.SetUpperBound(intentUpperBound)
-}
-
 func (i *intentInterleavingIter) Stats() IteratorStats {
 	stats := i.iter.Stats()
 	intentStats := i.intentIter.Stats()
@@ -988,12 +977,7 @@ func (i *intentInterleavingIter) SupportsPrev() bool {
 // hints. It uses pebble.Iterator.Clone to ensure that the two iterators see
 // the identical engine state.
 func newMVCCIteratorByCloningEngineIter(iter EngineIterator, opts IterOptions) MVCCIterator {
-	pIter := iter.GetRawIter()
-	it := newPebbleIterator(nil, pIter, opts, StandardDurability)
-	if iter == nil {
-		panic("couldn't create a new iterator")
-	}
-	return it
+	return newPebbleIterator(nil, iter.GetRawIter(), opts, StandardDurability)
 }
 
 // unsageMVCCIterator is used in RaceEnabled test builds to randomly inject

@@ -1225,12 +1225,12 @@ func (p *Pebble) clearRange(start, end MVCCKey) error {
 }
 
 // ClearIterRange implements the Engine interface.
-func (p *Pebble) ClearIterRange(iter MVCCIterator, start, end roachpb.Key) error {
+func (p *Pebble) ClearIterRange(start, end roachpb.Key) error {
 	// Write all the tombstones in one batch.
-	batch := p.NewUnindexedBatch(true /* writeOnly */)
+	batch := p.NewUnindexedBatch(false /* writeOnly */)
 	defer batch.Close()
 
-	if err := batch.ClearIterRange(iter, start, end); err != nil {
+	if err := batch.ClearIterRange(start, end); err != nil {
 		return err
 	}
 	return batch.Commit(true)
@@ -1920,27 +1920,16 @@ func (p *pebbleReadOnly) NewMVCCIterator(iterKind MVCCIterKind, opts IterOptions
 		return iter
 	}
 
-	if !opts.MinTimestampHint.IsEmpty() {
-		// MVCCIterators that specify timestamp bounds cannot be cached.
-		iter := MVCCIterator(newPebbleIterator(p.parent.db, nil, opts, p.durability))
-		if util.RaceEnabled {
-			iter = wrapInUnsafeIter(iter)
-		}
-		return iter
-	}
-
 	iter := &p.normalIter
 	if opts.Prefix {
 		iter = &p.prefixIter
 	}
 	if iter.inuse {
-		panic("iterator already in use")
+		return newPebbleIterator(p.parent.db, p.iter, opts, p.durability)
 	}
-	// Ensures no timestamp hints etc.
-	checkOptionsForIterReuse(opts)
 
 	if iter.iter != nil {
-		iter.setBounds(opts.LowerBound, opts.UpperBound)
+		iter.setOptions(opts, p.durability)
 	} else {
 		iter.init(p.parent.db, p.iter, p.iterUnused, opts, p.durability)
 		if p.iter == nil {
@@ -1970,13 +1959,11 @@ func (p *pebbleReadOnly) NewEngineIterator(opts IterOptions) EngineIterator {
 		iter = &p.prefixEngineIter
 	}
 	if iter.inuse {
-		panic("iterator already in use")
+		return newPebbleIterator(p.parent.db, p.iter, opts, p.durability)
 	}
-	// Ensures no timestamp hints etc.
-	checkOptionsForIterReuse(opts)
 
 	if iter.iter != nil {
-		iter.setBounds(opts.LowerBound, opts.UpperBound)
+		iter.setOptions(opts, p.durability)
 	} else {
 		iter.init(p.parent.db, p.iter, p.iterUnused, opts, p.durability)
 		if p.iter == nil {
@@ -1989,18 +1976,6 @@ func (p *pebbleReadOnly) NewEngineIterator(opts IterOptions) EngineIterator {
 
 	iter.inuse = true
 	return iter
-}
-
-// checkOptionsForIterReuse checks that the options are appropriate for
-// iterators that are reusable, and panics if not. This includes disallowing
-// any timestamp hints.
-func checkOptionsForIterReuse(opts IterOptions) {
-	if !opts.MinTimestampHint.IsEmpty() || !opts.MaxTimestampHint.IsEmpty() {
-		panic("iterator with timestamp hints cannot be reused")
-	}
-	if !opts.Prefix && len(opts.UpperBound) == 0 && len(opts.LowerBound) == 0 {
-		panic("iterator must set prefix or upper bound or lower bound")
-	}
 }
 
 // ConsistentIterators implements the Engine interface.
@@ -2066,7 +2041,7 @@ func (p *pebbleReadOnly) ClearMVCCRange(start, end MVCCKey) error {
 	panic("not implemented")
 }
 
-func (p *pebbleReadOnly) ClearIterRange(iter MVCCIterator, start, end roachpb.Key) error {
+func (p *pebbleReadOnly) ClearIterRange(start, end roachpb.Key) error {
 	panic("not implemented")
 }
 
